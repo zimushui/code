@@ -171,6 +171,7 @@ describe("Codex", () => {
     try {
       const thread = client.startThread({
         model: "gpt-test-1",
+        threadSource: "automated_review",
         sandboxMode: "workspace-write",
       });
       await thread.run("apply options");
