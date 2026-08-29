@@ -36,10 +36,36 @@ const CONTEXT_WINDOW_1M: u64 = 1_047_576;
 const MAX_OUTPUT_DEFAULT: u64 = 128_000;
 
 static UPSTREAM_MODELS: Lazy<Vec<ModelInfo>> = Lazy::new(|| {
-    serde_json::from_str::<ModelsResponse>(include_str!("../../../codex-rs/models-manager/models.json"))
-        .map(|response| response.models)
-        .unwrap_or_else(|err| panic!("failed to parse upstream models.json: {err}"))
+    parse_upstream_models(include_str!(
+        "../../../codex-rs/models-manager/models.json"
+    ))
+    .unwrap_or_else(|err| panic!("failed to parse upstream models.json: {err}"))
 });
+
+fn parse_upstream_models(raw_catalog: &str) -> serde_json::Result<Vec<ModelInfo>> {
+    let mut catalog: serde_json::Value = serde_json::from_str(raw_catalog)?;
+    normalize_reasoning_summary_field_names(&mut catalog);
+    serde_json::from_value::<ModelsResponse>(catalog).map(|response| response.models)
+}
+
+fn normalize_reasoning_summary_field_names(catalog: &mut serde_json::Value) {
+    let Some(models) = catalog.get_mut("models").and_then(serde_json::Value::as_array_mut) else {
+        return;
+    };
+    for model in models {
+        let Some(model) = model.as_object_mut() else {
+            continue;
+        };
+        let Some(supports_summary_parameter) =
+            model.remove("supports_reasoning_summary_parameter")
+        else {
+            continue;
+        };
+        model
+            .entry("supports_reasoning_summaries")
+            .or_insert(supports_summary_parameter);
+    }
+}
 
 fn namespaced_model_suffix(model: &str) -> Option<&str> {
     let (namespace, suffix) = model.split_once('/')?;
@@ -248,8 +274,10 @@ fn apply_upstream_model_overrides(mut family: ModelFamily) -> ModelFamily {
     family.supports_image_detail_original = model_info.supports_image_detail_original;
     family.supports_image_generation = supports_image_generation(model_info);
     family.uses_local_shell_tool = matches!(model_info.shell_type, ConfigShellToolType::Local);
-    family.uses_shell_command_tool =
-        matches!(model_info.shell_type, ConfigShellToolType::ShellCommand);
+    family.uses_shell_command_tool = matches!(
+        model_info.shell_type,
+        ConfigShellToolType::ShellCommand | ConfigShellToolType::UnifiedExec
+    );
     family.auto_compact_token_limit = model_info.auto_compact_token_limit();
     family.truncation_policy = match model_info.truncation_policy.mode {
         TruncationMode::Bytes => TruncationPolicy::Bytes(
@@ -510,6 +538,7 @@ mod tests {
     use crate::tool_apply_patch::ApplyPatchToolType;
 
     use super::find_family_for_model;
+    use super::parse_upstream_models;
 
     #[test]
     fn image_generation_support_tracks_image_input_modality() {
@@ -539,6 +568,14 @@ mod tests {
             family.default_reasoning_effort,
             Some(ReasoningEffort::Medium)
         );
+    }
+
+    #[test]
+    fn upstream_models_parser_accepts_renamed_reasoning_summary_field() {
+        let catalog = include_str!("../../../codex-rs/models-manager/models.json");
+        let models = parse_upstream_models(catalog).expect("bundled upstream models parse");
+
+        assert!(!models.is_empty());
     }
 }
 
