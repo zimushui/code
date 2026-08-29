@@ -7,6 +7,12 @@
 
 - (none)
 
+## [0.6.173] - 2026-08-29
+
+- Core: tolerate renamed model summary fields in streamed responses. (1a4fbf66)
+- Core: classify streamed rate limit errors consistently. (9da6125c)
+- Core: backport upstream Responses and MCP protocol parity. (6ad6d5c9)
+
 ## [0.6.172] - 2026-08-10
 
 - Core: backport upstream shell environment parity for command execution. (66d98380)
