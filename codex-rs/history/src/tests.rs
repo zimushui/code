@@ -70,7 +70,10 @@ fn response_item_envelope_stores_metadata_beside_rollout_payload() -> Result<()>
         ordinal: Some(7),
         item: RolloutItem::ResponseItem(ResponseItemEnvelope {
             item: response_item.clone(),
-            metadata: Some(CodexHarnessMetadata {}),
+            metadata: Some(CodexHarnessMetadata {
+                client_authored: true,
+                fallback_token_limit_override: Some(20_000),
+            }),
         }),
     };
     let serialized = serde_json::to_value(&line)?;
@@ -82,7 +85,7 @@ fn response_item_envelope_stores_metadata_beside_rollout_payload() -> Result<()>
             "ordinal": 7,
             "type": "response_item",
             "payload": response_item,
-            "metadata": {},
+            "metadata": { "client_authored": true, "fallback_token_limit_override": 20_000 },
         })
     );
     assert_eq!(serialized["payload"].get("metadata"), None);
@@ -91,7 +94,13 @@ fn response_item_envelope_stores_metadata_beside_rollout_payload() -> Result<()>
     let RolloutItem::ResponseItem(envelope) = restored.item else {
         panic!("expected response item");
     };
-    assert_eq!(envelope.metadata, Some(CodexHarnessMetadata {}));
+    assert_eq!(
+        envelope.metadata,
+        Some(CodexHarnessMetadata {
+            client_authored: true,
+            fallback_token_limit_override: Some(20_000),
+        })
+    );
     Ok(())
 }
 
@@ -118,7 +127,7 @@ fn response_item_envelope_ignores_unknown_harness_metadata_fields() -> Result<()
     let RolloutItem::ResponseItem(envelope) = line.item else {
         panic!("expected response item");
     };
-    assert_eq!(envelope.metadata, Some(CodexHarnessMetadata {}));
+    assert_eq!(envelope.metadata, Some(CodexHarnessMetadata::default()));
 
     let compacted = serde_json::from_value::<CompactedItem>(json!({
         "message": "summary",
@@ -127,7 +136,7 @@ fn response_item_envelope_ignores_unknown_harness_metadata_fields() -> Result<()
     }))?;
     assert_eq!(
         compacted.replacement_history.expect("replacement history")[0].metadata,
-        Some(CodexHarnessMetadata {})
+        Some(CodexHarnessMetadata::default())
     );
     Ok(())
 }
@@ -175,10 +184,14 @@ fn compacted_replacement_history_stores_metadata_in_an_aligned_sidecar() -> Resu
         replacement_history: Some(vec![
             ResponseItemEnvelope {
                 item: developer_message.clone(),
-                metadata: Some(CodexHarnessMetadata {}),
+                metadata: Some(CodexHarnessMetadata {
+                    client_authored: true,
+                    ..Default::default()
+                }),
             },
             ResponseItemEnvelope::new(compaction_item.clone()),
         ]),
+        mcp_resource_origins: None,
         window_number: None,
         first_window_id: None,
         previous_window_id: None,
@@ -191,7 +204,10 @@ fn compacted_replacement_history_stores_metadata_in_an_aligned_sidecar() -> Resu
         json!({
             "message": "summary",
             "replacement_history": [developer_message, compaction_item],
-            "replacement_history_metadata": [{}, {}],
+            "replacement_history_metadata": [
+                { "client_authored": true },
+                { "client_authored": false },
+            ],
         })
     );
 
@@ -201,11 +217,14 @@ fn compacted_replacement_history_stores_metadata_in_an_aligned_sidecar() -> Resu
         Some(vec![
             ResponseItemEnvelope {
                 item: developer_message,
-                metadata: Some(CodexHarnessMetadata {}),
+                metadata: Some(CodexHarnessMetadata {
+                    client_authored: true,
+                    ..Default::default()
+                }),
             },
             ResponseItemEnvelope {
                 item: compaction_item,
-                metadata: Some(CodexHarnessMetadata {}),
+                metadata: Some(CodexHarnessMetadata::default()),
             },
         ])
     );
@@ -260,7 +279,10 @@ fn compacted_metadata_remains_compatible_with_legacy_response_item_readers() -> 
     let response_item = response_message("developer");
     let envelope = ResponseItemEnvelope {
         item: response_item.clone(),
-        metadata: Some(CodexHarnessMetadata {}),
+        metadata: Some(CodexHarnessMetadata {
+            client_authored: true,
+            ..Default::default()
+        }),
     };
     let response_line = serde_json::to_value(RolloutItem::ResponseItem(envelope.clone()))?;
     let LegacyRolloutItem::ResponseItem(legacy_response) =
@@ -273,6 +295,7 @@ fn compacted_metadata_remains_compatible_with_legacy_response_item_readers() -> 
     let compacted_line = serde_json::to_value(RolloutItem::Compacted(CompactedItem {
         message: "summary".to_string(),
         replacement_history: Some(vec![envelope]),
+        mcp_resource_origins: Some(McpResourceOriginCheckpoint::default()),
         window_number: None,
         first_window_id: None,
         previous_window_id: None,
@@ -337,8 +360,27 @@ fn rollout_item_variants_preserve_existing_payload_shapes() -> Result<()> {
             "payload": { "full": true, "state": { "cwd": "/tmp" } },
         }),
         json!({
+            "type": "security_risk_score",
+            "payload": {
+                "scores": {
+                    "action_risk": 0.92,
+                    "data_exfiltration": 0.31,
+                },
+            },
+        }),
+        json!({
             "type": "event_msg",
             "payload": { "type": "warning", "message": "heads up" },
+        }),
+        json!({
+            "type": "realtime_item",
+            "payload": {
+                "id": "segment-1",
+                "realtime_session_id": "session-1",
+                "type": "transcript_segment",
+                "role": "assistant",
+                "text": "hello",
+            },
         }),
     ];
 
@@ -354,7 +396,7 @@ fn rollout_item_variants_preserve_existing_payload_shapes() -> Result<()> {
 fn rollout_item_schema_matches_tagged_payload_and_sibling_metadata() -> Result<()> {
     let schema = serde_json::to_value(schemars::schema_for!(RolloutItem))?;
     let variants = schema["oneOf"].as_array().expect("rollout variants");
-    assert_eq!(variants.len(), 8);
+    assert_eq!(variants.len(), 10);
 
     for variant in variants {
         let required = variant["required"].as_array().expect("required fields");
@@ -405,6 +447,7 @@ fn compacted_item_serializes_window_number_and_id() -> Result<()> {
     let item = CompactedItem {
         message: "summary".to_string(),
         replacement_history: None,
+        mcp_resource_origins: None,
         window_number: Some(3),
         first_window_id: Some("019b3f6e-0000-7000-8000-000000000001".to_string()),
         previous_window_id: Some("019b3f6e-0000-7000-8000-000000000002".to_string()),
@@ -437,6 +480,7 @@ fn compacted_item_migrates_legacy_numeric_window_id() -> Result<()> {
         CompactedItem {
             message: "summary".to_string(),
             replacement_history: None,
+            mcp_resource_origins: None,
             window_number: Some(3),
             first_window_id: None,
             previous_window_id: None,

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use codex_protocol::ThreadId;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
+use codex_protocol::mcp::McpResourceOriginCheckpoint;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
@@ -22,6 +23,8 @@ use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::WorldStateItem;
+use codex_protocol::realtime::RealtimeItem;
+use codex_protocol::security_risk::SecurityRiskScore;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -40,10 +43,17 @@ pub struct ResponseItemEnvelope {
 
 /// Metadata owned by the Codex harness and persisted with a response item.
 ///
-/// This intentionally has no fields yet. Keeping it closed prevents rollout
-/// metadata from becoming an untyped extension point.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
-pub struct CodexHarnessMetadata {}
+pub struct CodexHarnessMetadata {
+    /// Whether a developer message was supplied by an app-server client.
+    #[serde(default)]
+    pub client_authored: bool,
+
+    /// Overrides history's fallback truncation budget, including on resume.
+    /// Measured in tokens, with any tool-specific allowance already included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_token_limit_override: Option<usize>,
+}
 
 impl ResponseItemEnvelope {
     /// Wraps a raw Responses API item for persisted history.
@@ -92,11 +102,16 @@ pub enum RolloutItem {
     SessionMeta(SessionMetaLine),
     ResponseItem(ResponseItemEnvelope),
     InterAgentCommunication(InterAgentCommunication),
-    InterAgentCommunicationMetadata { trigger_turn: bool },
+    InterAgentCommunicationMetadata {
+        trigger_turn: bool,
+    },
     Compacted(CompactedItem),
     TurnContext(TurnContextItem),
     WorldState(WorldStateItem),
+    SecurityRiskScore(SecurityRiskScore),
     EventMsg(EventMsg),
+    /// Sparse, model-invisible facts used to reconstruct realtime presentation.
+    RealtimeItem(RealtimeItem),
 }
 
 impl Serialize for RolloutItem {
@@ -137,6 +152,7 @@ mod rollout_payload;
 pub struct CompactedItem {
     pub message: String,
     pub replacement_history: Option<Vec<ResponseItemEnvelope>>,
+    pub mcp_resource_origins: Option<McpResourceOriginCheckpoint>,
     pub window_number: Option<u64>,
     pub first_window_id: Option<String>,
     pub previous_window_id: Option<String>,
@@ -408,6 +424,8 @@ fn multi_agent_version_from_items(
             | RolloutItem::InterAgentCommunicationMetadata { .. }
             | RolloutItem::Compacted(_)
             | RolloutItem::WorldState(_)
+            | RolloutItem::SecurityRiskScore(_)
+            | RolloutItem::RealtimeItem(_)
             | RolloutItem::EventMsg(_) => None,
         })
     })

@@ -21,16 +21,26 @@ use codex_code_mode::ToolDefinition;
 use codex_code_mode::ToolInvocationFuture;
 use codex_code_mode::WaitOutcome;
 use codex_code_mode::WaitRequest;
+#[cfg(unix)]
+use codex_code_mode_host::GrpcCodeModeHost;
 use codex_code_mode_protocol::grpc;
 use codex_code_mode_protocol::grpc::code_mode_host_client::CodeModeHostClient;
+#[cfg(unix)]
+use codex_code_mode_protocol::grpc::code_mode_host_server::CodeModeHostServer;
 use codex_protocol::ToolName;
 use futures::FutureExt;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+#[cfg(unix)]
+use tokio::net::UnixListener;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
+#[cfg(unix)]
+use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
 use tonic::Code;
+#[cfg(unix)]
+use tonic::transport::Server;
 
 #[path = "support/host.rs"]
 mod host;
@@ -116,8 +126,13 @@ fn tool(name: &str) -> ToolDefinition {
     }
 }
 
-fn text_response(cell: &str, value: &str) -> RuntimeResponse {
+fn text_response(
+    cell: &str,
+    value: &str,
+    code_mode_host_duration: Option<Duration>,
+) -> RuntimeResponse {
     RuntimeResponse::Result {
+        code_mode_host_duration,
         cell_id: cell_id(cell),
         content_items: vec![FunctionCallOutputContentItem::InputText {
             text: value.to_string(),
@@ -166,6 +181,27 @@ async fn start_active_wait(
 }
 
 #[tokio::test]
+async fn grpc_endpoints_reject_credentials_without_disclosing_them() {
+    for endpoint in [
+        "http://alice:secret@host.example",
+        "https://alice:secret@host.example",
+        "https://alice@host.example",
+        "https://:secret@host.example",
+    ] {
+        let provider = GrpcCodeModeSessionProvider::new(endpoint);
+        let error = provider
+            .create_session(Arc::new(NoopCodeModeSessionDelegate))
+            .await
+            .err()
+            .expect("gRPC credentials should be rejected");
+
+        assert!(error.contains("must not include credentials"));
+        assert!(!error.contains("alice"));
+        assert!(!error.contains("secret"));
+    }
+}
+
+#[tokio::test]
 async fn tcp_session_persists_values_and_forwards_tools_notifications_and_closure() -> Result<()> {
     let host = HostHarness::start("grpc://127.0.0.1:0").await?;
     assert!(host.endpoint.starts_with("http://127.0.0.1:"));
@@ -176,9 +212,11 @@ async fn tcp_session_persists_values_and_forwards_tools_notifications_and_closur
         .await
         .map_err(anyhow::Error::msg)?;
 
+    let actual = execute(&session, request(r#"store("key", "persisted");"#)).await?;
     assert_eq!(
-        execute(&session, request(r#"store("key", "persisted");"#)).await?,
+        actual,
         RuntimeResponse::Result {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: cell_id("1"),
             content_items: Vec::new(),
             error_text: None,
@@ -190,9 +228,10 @@ async fn tcp_session_persists_values_and_forwards_tools_notifications_and_closur
     );
     callback.tool_call_id = "call-2".to_string();
     callback.enabled_tools = vec![tool("echo")];
+    let actual = execute(&session, callback).await?;
     assert_eq!(
-        execute(&session, callback).await?,
-        text_response("2", "output")
+        actual,
+        text_response("2", "output", actual.code_mode_host_duration())
     );
     timeout(TEST_TIMEOUT, delegate.notification_delivered.notified())
         .await
@@ -315,9 +354,10 @@ async fn cancelling_execution_before_admission_keeps_the_session_usable() -> Res
     .await
     .context("cancelled execution leaked its remote cell")??;
 
+    let actual = execute(&session, request(r#"text("still alive");"#)).await?;
     assert_eq!(
-        execute(&session, request(r#"text("still alive");"#)).await?,
-        text_response("2", "still alive")
+        actual,
+        text_response("2", "still alive", actual.code_mode_host_duration())
     );
     session.shutdown().await.map_err(anyhow::Error::msg)?;
     Ok(())
@@ -396,9 +436,10 @@ async fn dropping_a_started_cell_off_runtime_terminates_its_buffered_remote_exec
             .contains(&abandoned_cell)
     );
 
+    let actual = execute(&session, request(r#"text("still alive");"#)).await?;
     assert_eq!(
-        execute(&session, request(r#"text("still alive");"#)).await?,
-        text_response("2", "still alive")
+        actual,
+        text_response("2", "still alive", actual.code_mode_host_duration())
     );
     session.shutdown().await.map_err(anyhow::Error::msg)?;
     Ok(())
@@ -438,9 +479,10 @@ async fn dropping_an_initial_response_terminates_its_pending_remote_execution() 
     .await
     .context("dropping an initial response did not terminate its pending remote execution")?;
 
+    let actual = execute(&session, request(r#"text("still alive");"#)).await?;
     assert_eq!(
-        execute(&session, request(r#"text("still alive");"#)).await?,
-        text_response("2", "still alive")
+        actual,
+        text_response("2", "still alive", actual.code_mode_host_duration())
     );
     session.shutdown().await.map_err(anyhow::Error::msg)?;
     Ok(())
@@ -459,22 +501,29 @@ async fn synchronous_delegate_panics_do_not_orphan_callbacks_or_close_the_sessio
         r#"try { await tools.echo({}); text("unexpected"); } catch (_) { text("tool recovered"); }"#,
     );
     tool_panic.enabled_tools = vec![tool("echo")];
+    let actual = execute(&session, tool_panic).await?;
     assert_eq!(
-        execute(&session, tool_panic).await?,
-        text_response("1", "tool recovered")
+        actual,
+        text_response("1", "tool recovered", actual.code_mode_host_duration())
     );
 
+    let actual = execute(
+        &session,
+        request(r#"notify("panic"); text("notification recovered");"#),
+    )
+    .await?;
     assert_eq!(
-        execute(
-            &session,
-            request(r#"notify("panic"); text("notification recovered");"#),
+        actual,
+        text_response(
+            "2",
+            "notification recovered",
+            actual.code_mode_host_duration()
         )
-        .await?,
-        text_response("2", "notification recovered")
     );
+    let actual = execute(&session, request(r#"text("still alive");"#)).await?;
     assert_eq!(
-        execute(&session, request(r#"text("still alive");"#)).await?,
-        text_response("3", "still alive")
+        actual,
+        text_response("3", "still alive", actual.code_mode_host_duration())
     );
 
     session.shutdown().await.map_err(anyhow::Error::msg)?;
@@ -493,13 +542,15 @@ async fn tool_delegate_self_cancellation_returns_an_error_without_hanging() -> R
     let mut callback =
         request(r#"try { await tools.echo({}); } catch (_) { text("tool recovered"); }"#);
     callback.enabled_tools = vec![tool("echo")];
+    let actual = execute(&session, callback).await?;
     assert_eq!(
-        execute(&session, callback).await?,
-        text_response("1", "tool recovered")
+        actual,
+        text_response("1", "tool recovered", actual.code_mode_host_duration())
     );
+    let actual = execute(&session, request(r#"text("still alive");"#)).await?;
     assert_eq!(
-        execute(&session, request(r#"text("still alive");"#)).await?,
-        text_response("2", "still alive")
+        actual,
+        text_response("2", "still alive", actual.code_mode_host_duration())
     );
 
     session.shutdown().await.map_err(anyhow::Error::msg)?;
@@ -518,12 +569,14 @@ async fn concurrent_wait_rejects_without_displacing_the_active_observer() -> Res
     pending.yield_time_ms = Some(/*value*/ 1);
     let started = session.execute(pending).await.map_err(anyhow::Error::msg)?;
     let running_cell = started.cell_id.clone();
+    let actual = started
+        .initial_response()
+        .await
+        .map_err(anyhow::Error::msg)?;
     assert_eq!(
-        started
-            .initial_response()
-            .await
-            .map_err(anyhow::Error::msg)?,
+        actual,
         RuntimeResponse::Yielded {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: running_cell.clone(),
             content_items: Vec::new(),
         }
@@ -552,22 +605,26 @@ async fn concurrent_wait_rejects_without_displacing_the_active_observer() -> Res
         format!("exec cell {running_cell} already has an active observer")
     );
 
+    let actual = timeout(TEST_TIMEOUT, first_wait)
+        .await
+        .context("active wait was displaced by the rejected observer")??
+        .map_err(anyhow::Error::msg)?;
     assert_eq!(
-        timeout(TEST_TIMEOUT, first_wait)
-            .await
-            .context("active wait was displaced by the rejected observer")??
-            .map_err(anyhow::Error::msg)?,
+        actual,
         WaitOutcome::LiveCell(RuntimeResponse::Yielded {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: running_cell.clone(),
             content_items: Vec::new(),
         })
     );
+    let actual = session
+        .terminate(running_cell.clone())
+        .await
+        .map_err(anyhow::Error::msg)?;
     assert_eq!(
-        session
-            .terminate(running_cell.clone())
-            .await
-            .map_err(anyhow::Error::msg)?,
+        actual,
         WaitOutcome::LiveCell(RuntimeResponse::Terminated {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: running_cell,
             content_items: Vec::new(),
         })
@@ -589,12 +646,14 @@ async fn dropping_a_wait_retires_its_observer_before_the_next_wait() -> Result<(
     pending.yield_time_ms = Some(/*value*/ 1);
     let started = session.execute(pending).await.map_err(anyhow::Error::msg)?;
     let running_cell = started.cell_id.clone();
+    let actual = started
+        .initial_response()
+        .await
+        .map_err(anyhow::Error::msg)?;
     assert_eq!(
-        started
-            .initial_response()
-            .await
-            .map_err(anyhow::Error::msg)?,
+        actual,
         RuntimeResponse::Yielded {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: running_cell.clone(),
             content_items: Vec::new(),
         }
@@ -611,28 +670,32 @@ async fn dropping_a_wait_retires_its_observer_before_the_next_wait() -> Result<(
     first_wait.abort();
     let _ = first_wait.await;
 
+    let actual = timeout(
+        TEST_TIMEOUT,
+        session.wait(WaitRequest {
+            cell_id: running_cell.clone(),
+            yield_time_ms: 1,
+        }),
+    )
+    .await
+    .context("replacement wait did not observe cancellation retirement")?
+    .map_err(anyhow::Error::msg)?;
     assert_eq!(
-        timeout(
-            TEST_TIMEOUT,
-            session.wait(WaitRequest {
-                cell_id: running_cell.clone(),
-                yield_time_ms: 1,
-            }),
-        )
-        .await
-        .context("replacement wait did not observe cancellation retirement")?
-        .map_err(anyhow::Error::msg)?,
+        actual,
         WaitOutcome::LiveCell(RuntimeResponse::Yielded {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: running_cell.clone(),
             content_items: Vec::new(),
         })
     );
+    let actual = session
+        .terminate(running_cell.clone())
+        .await
+        .map_err(anyhow::Error::msg)?;
     assert_eq!(
-        session
-            .terminate(running_cell.clone())
-            .await
-            .map_err(anyhow::Error::msg)?,
+        actual,
         WaitOutcome::LiveCell(RuntimeResponse::Terminated {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: running_cell,
             content_items: Vec::new(),
         })
@@ -652,9 +715,11 @@ async fn dropping_a_session_off_runtime_retires_its_active_cells() -> Result<()>
         .map_err(anyhow::Error::msg)?;
     let mut pending = request("await new Promise(() => {});");
     pending.yield_time_ms = Some(/*value*/ 1);
+    let actual = execute(&session, pending).await?;
     assert_eq!(
-        execute(&session, pending).await?,
+        actual,
         RuntimeResponse::Yielded {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: cell_id("1"),
             content_items: Vec::new(),
         }
@@ -713,9 +778,10 @@ async fn large_unary_tool_completion_does_not_block_an_independent_session() -> 
         .context("large tool callback did not start")??
         .forget();
 
+    let actual = execute(&fast_session, request(r#"text("fast-before");"#)).await?;
     assert_eq!(
-        execute(&fast_session, request(r#"text("fast-before");"#)).await?,
-        text_response("1", "fast-before")
+        actual,
+        text_response("1", "fast-before", actual.code_mode_host_duration())
     );
 
     delegate.release.add_permits(/*n*/ 1);
@@ -723,12 +789,24 @@ async fn large_unary_tool_completion_does_not_block_an_independent_session() -> 
     let fast_response = execute(&fast_session, request(r#"text("fast-during");"#));
     let (slow_response, fast_response) = tokio::join!(slow_response, fast_response);
 
-    assert_eq!(fast_response?, text_response("2", "fast-during"));
+    let actual = fast_response?;
     assert_eq!(
-        slow_response
-            .context("large unary tool response did not complete")?
-            .map_err(anyhow::Error::msg)?,
-        text_response("1", "8388608")
+        actual,
+        text_response("2", "fast-during", actual.code_mode_host_duration())
+    );
+    let actual = slow_response
+        .context("large unary tool response did not complete")?
+        .map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        actual,
+        RuntimeResponse::Result {
+            code_mode_host_duration: actual.code_mode_host_duration(),
+            cell_id: cell_id("1"),
+            content_items: vec![FunctionCallOutputContentItem::InputText {
+                text: "8388608".to_string(),
+            }],
+            error_text: None,
+        }
     );
     slow_session.shutdown().await.map_err(anyhow::Error::msg)?;
     fast_session.shutdown().await.map_err(anyhow::Error::msg)?;
@@ -760,18 +838,27 @@ async fn single_subscription_processes_slow_and_fast_tools_concurrently() -> Res
 
     let mut fast = request(r#"const result = await tools.fast({}); text(result.value);"#);
     fast.enabled_tools = vec![tool("fast")];
+    let actual = execute(&session, fast).await?;
     assert_eq!(
-        execute(&session, fast).await?,
-        text_response("2", "isolated")
+        actual,
+        text_response("2", "isolated", actual.code_mode_host_duration())
     );
 
     delegate.release.add_permits(/*n*/ 1);
+    let actual = timeout(TEST_TIMEOUT, slow_cell.initial_response())
+        .await
+        .context("slow tool did not finish")?
+        .map_err(anyhow::Error::msg)?;
     assert_eq!(
-        timeout(TEST_TIMEOUT, slow_cell.initial_response())
-            .await
-            .context("slow tool did not finish")?
-            .map_err(anyhow::Error::msg)?,
-        text_response("1", "8388608")
+        actual,
+        RuntimeResponse::Result {
+            code_mode_host_duration: actual.code_mode_host_duration(),
+            cell_id: cell_id("1"),
+            content_items: vec![FunctionCallOutputContentItem::InputText {
+                text: "8388608".to_string(),
+            }],
+            error_text: None,
+        }
     );
     session.shutdown().await.map_err(anyhow::Error::msg)?;
     Ok(())
@@ -804,50 +891,62 @@ async fn sessions_enforce_independent_yield_limits() -> Result<()> {
 
     let mut pending = request("await new Promise(() => {});");
     pending.yield_time_ms = Some(/*value*/ 60_000);
+    let actual = execute(&limited, pending).await?;
     assert_eq!(
-        execute(&limited, pending).await?,
+        actual,
         RuntimeResponse::Yielded {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: cell_id("1"),
             content_items: Vec::new(),
         }
     );
+    let actual = timeout(
+        TEST_TIMEOUT,
+        limited.wait(WaitRequest {
+            cell_id: cell_id("1"),
+            yield_time_ms: 60_000,
+        }),
+    )
+    .await
+    .context("session yield limit did not bound an explicit wait")?
+    .map_err(anyhow::Error::msg)?;
     assert_eq!(
-        timeout(
-            TEST_TIMEOUT,
-            limited.wait(WaitRequest {
-                cell_id: cell_id("1"),
-                yield_time_ms: 60_000,
-            }),
-        )
-        .await
-        .context("session yield limit did not bound an explicit wait")?
-        .map_err(anyhow::Error::msg)?,
+        actual,
         WaitOutcome::LiveCell(RuntimeResponse::Yielded {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: cell_id("1"),
             content_items: Vec::new(),
         })
     );
+    let actual = execute(
+        &other,
+        request(r#"await new Promise(resolve => setTimeout(resolve, 25)); text("isolated");"#),
+    )
+    .await?;
     assert_eq!(
-        execute(
-            &other,
-            request(r#"await new Promise(resolve => setTimeout(resolve, 25)); text("isolated");"#),
-        )
-        .await?,
-        text_response("1", "isolated")
+        actual,
+        text_response("1", "isolated", actual.code_mode_host_duration())
     );
+    let actual = limited
+        .terminate(cell_id("1"))
+        .await
+        .map_err(anyhow::Error::msg)?;
     assert_eq!(
-        limited
-            .terminate(cell_id("1"))
-            .await
-            .map_err(anyhow::Error::msg)?,
+        actual,
         WaitOutcome::LiveCell(RuntimeResponse::Terminated {
+            code_mode_host_duration: actual.code_mode_host_duration(),
             cell_id: cell_id("1"),
             content_items: Vec::new(),
         })
     );
+    let actual = execute(&limited, request("await new Promise(() => {});")).await?;
     assert_eq!(
-        execute(&limited, request(r#"text("recovered");"#)).await?,
-        text_response("2", "recovered")
+        actual,
+        RuntimeResponse::Yielded {
+            code_mode_host_duration: actual.code_mode_host_duration(),
+            cell_id: cell_id("2"),
+            content_items: Vec::new(),
+        }
     );
     limited.shutdown().await.map_err(anyhow::Error::msg)?;
     other.shutdown().await.map_err(anyhow::Error::msg)?;
@@ -897,5 +996,240 @@ async fn dropping_a_grpc_lease_retires_its_server_session() -> Result<()> {
     })
     .await
     .context("dropping the gRPC lease did not retire its server session")??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn cached_session_recovers_after_a_remote_host_restarts() -> Result<()> {
+    let mut original = HostHarness::start("grpc://127.0.0.1:0").await?;
+    let listen_url = original
+        .endpoint
+        .replacen("http://", "grpc://", /*count*/ 1);
+    let provider = GrpcCodeModeSessionProvider::new(original.endpoint.clone());
+    let delegate = Arc::new(RecordingDelegate::default());
+    let session = provider
+        .create_session(delegate.clone())
+        .await
+        .map_err(anyhow::Error::msg)?;
+
+    let mut pending = request("await tools.echo({generation: 1}); await new Promise(() => {});");
+    pending.enabled_tools = vec![tool("echo")];
+    pending.yield_time_ms = Some(/*value*/ 1);
+    let started = session.execute(pending).await.map_err(anyhow::Error::msg)?;
+    let old_cell_id = started.cell_id.clone();
+    assert_eq!(old_cell_id, cell_id("1"));
+    assert!(matches!(
+        started.initial_response().await,
+        Ok(RuntimeResponse::Yielded { .. })
+    ));
+
+    let interrupted_wait = start_active_wait(
+        Arc::clone(&session),
+        WaitRequest {
+            cell_id: old_cell_id.clone(),
+            yield_time_ms: 60_000,
+        },
+    )
+    .await?;
+    timeout(TEST_TIMEOUT, async {
+        while delegate
+            .invocations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .context("original host did not dispatch its tool callback")?;
+    original
+        ._child
+        .kill()
+        .await
+        .context("stop the original gRPC host")?;
+    assert!(
+        timeout(TEST_TIMEOUT, interrupted_wait)
+            .await
+            .context("host loss did not interrupt the pending wait")?
+            .context("interrupted wait task panicked")?
+            .is_err()
+    );
+    timeout(TEST_TIMEOUT, async {
+        loop {
+            if delegate
+                .closed_cells
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains(&old_cell_id)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .context("host loss did not retire the original generation's cell")?;
+
+    let _replacement = HostHarness::start(&listen_url).await?;
+    let mut callback = request(
+        r#"const result = await tools.echo({generation: 2}); notify("reconnected"); text(result.value);"#,
+    );
+    callback.tool_call_id = "reconnected-call".to_string();
+    callback.enabled_tools = vec![tool("echo")];
+    let (callback_response, concurrent_response) = tokio::join!(
+        execute(&session, callback),
+        execute(&session, request(r#"text("concurrent")"#)),
+    );
+    let callback_response = callback_response?;
+    let RuntimeResponse::Result {
+        cell_id: callback_cell_id,
+        ..
+    } = &callback_response
+    else {
+        anyhow::bail!("reconnected tool call did not complete");
+    };
+    let callback_cell_id = callback_cell_id.clone();
+    assert_eq!(
+        callback_response,
+        text_response(
+            callback_cell_id.as_str(),
+            "output",
+            callback_response.code_mode_host_duration()
+        )
+    );
+    let concurrent_response = concurrent_response?;
+    let RuntimeResponse::Result {
+        cell_id: concurrent_cell_id,
+        ..
+    } = &concurrent_response
+    else {
+        anyhow::bail!("concurrent reconnected cell did not complete");
+    };
+    let concurrent_cell_id = concurrent_cell_id.clone();
+    assert_eq!(
+        concurrent_response,
+        text_response(
+            concurrent_cell_id.as_str(),
+            "concurrent",
+            concurrent_response.code_mode_host_duration()
+        )
+    );
+    let mut replacement_cell_ids = [callback_cell_id.as_str(), concurrent_cell_id.as_str()];
+    replacement_cell_ids.sort_unstable();
+    assert_eq!(replacement_cell_ids, ["g2:1", "g2:2"]);
+    assert_eq!(
+        delegate
+            .invocations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|invocation| (invocation.cell_id.clone(), invocation.input.clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            (old_cell_id.clone(), Some(json!({ "generation": 1 }))),
+            (callback_cell_id.clone(), Some(json!({ "generation": 2 }))),
+        ]
+    );
+    assert_eq!(
+        *delegate
+            .notifications
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner),
+        vec![(
+            "reconnected-call".to_string(),
+            callback_cell_id,
+            "reconnected".to_string(),
+        )]
+    );
+
+    let mut pending = request("await new Promise(() => {});");
+    pending.yield_time_ms = Some(/*value*/ 1);
+    let started = session.execute(pending).await.map_err(anyhow::Error::msg)?;
+    let replacement_cell_id = started.cell_id.clone();
+    assert_eq!(replacement_cell_id, cell_id("g2:3"));
+    let actual = started
+        .initial_response()
+        .await
+        .map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        actual,
+        RuntimeResponse::Yielded {
+            code_mode_host_duration: actual.code_mode_host_duration(),
+            cell_id: replacement_cell_id.clone(),
+            content_items: Vec::new(),
+        }
+    );
+    let actual = session
+        .wait(WaitRequest {
+            cell_id: replacement_cell_id.clone(),
+            yield_time_ms: 1,
+        })
+        .await
+        .map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        actual,
+        WaitOutcome::LiveCell(RuntimeResponse::Yielded {
+            code_mode_host_duration: actual.code_mode_host_duration(),
+            cell_id: replacement_cell_id.clone(),
+            content_items: Vec::new(),
+        })
+    );
+    let actual = session
+        .terminate(replacement_cell_id.clone())
+        .await
+        .map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        actual,
+        WaitOutcome::LiveCell(RuntimeResponse::Terminated {
+            code_mode_host_duration: actual.code_mode_host_duration(),
+            cell_id: replacement_cell_id,
+            content_items: Vec::new(),
+        })
+    );
+
+    let stale_wait = session
+        .wait(WaitRequest {
+            cell_id: old_cell_id.clone(),
+            yield_time_ms: 1,
+        })
+        .await
+        .unwrap_err();
+    assert!(stale_wait.contains("stale code-mode host generation"));
+    let stale_termination = session.terminate(old_cell_id).await.unwrap_err();
+    assert!(stale_termination.contains("stale code-mode host generation"));
+    session.shutdown().await.map_err(anyhow::Error::msg)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unix_socket_endpoints_execute_code_mode_cells() -> Result<()> {
+    let directory = tempfile::tempdir().context("create Unix socket directory")?;
+    let socket_path = directory.path().join("grpc.sock");
+    let listener = UnixListener::bind(&socket_path).context("bind code-mode Unix socket")?;
+    let server = tokio::spawn(
+        Server::builder()
+            .add_service(CodeModeHostServer::new(GrpcCodeModeHost::new()))
+            .serve_with_incoming(UnixListenerStream::new(listener)),
+    );
+
+    for endpoint in [
+        format!("unix://{}", socket_path.display()),
+        format!("unix:{}", socket_path.display()),
+    ] {
+        let session = GrpcCodeModeSessionProvider::new(endpoint)
+            .create_session(Arc::new(NoopCodeModeSessionDelegate))
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let actual = execute(&session, request(r#"text("unix socket")"#)).await?;
+        assert_eq!(
+            actual,
+            text_response("1", "unix socket", actual.code_mode_host_duration())
+        );
+        session.shutdown().await.map_err(anyhow::Error::msg)?;
+    }
+
+    server.abort();
     Ok(())
 }
