@@ -3494,7 +3494,9 @@ async fn run_turn(
                 // Use the configured provider-specific stream retry budget.
                 let max_retries = tc.client.get_provider().stream_max_retries();
                 let req_id = match &e {
-                    CodexErr::Stream(_, _, req) => req.clone(),
+                    CodexErr::Stream(_, _, req) | CodexErr::RateLimitExceeded(_, _, req) => {
+                        req.clone()
+                    }
                     _ => None,
                 };
                 let is_connectivity = is_connectivity_error(&e);
@@ -3607,7 +3609,8 @@ async fn run_turn(
                 if should_retry_stream_after_error(has_tool_responses, retries, max_retries) {
                     retries += 1;
                     let (delay, retry_eta) = match e {
-                        CodexErr::Stream(_, Some(ref retry_after), _) => {
+                        CodexErr::Stream(_, Some(ref retry_after), _)
+                        | CodexErr::RateLimitExceeded(_, Some(ref retry_after), _) => {
                             let eta = format_retry_eta(&retry_after);
                             (retry_after.delay, eta)
                         }

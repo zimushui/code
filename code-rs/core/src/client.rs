@@ -3038,6 +3038,14 @@ async fn process_sse<S>(
                                     ));
                                 } else if error.r#type.as_deref() == Some("usage_not_included") {
                                     response_error = Some(CodexErr::UsageNotIncluded);
+                                } else if error.code.as_deref() == Some("rate_limit_exceeded") {
+                                    let retry_after = try_parse_retry_after(&error, Utc::now());
+                                    let message = error.message.unwrap_or_default();
+                                    response_error = Some(CodexErr::RateLimitExceeded(
+                                        message,
+                                        retry_after,
+                                        Some(request_id.clone()),
+                                    ));
                                 } else if is_quota_exceeded_error(&error) {
                                     response_error = Some(CodexErr::QuotaExceeded);
                                 } else if is_server_overloaded_error(&error) {
@@ -4000,7 +4008,7 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         match &events[0] {
-            Err(CodexErr::Stream(msg, Some(retry), _)) => {
+            Err(CodexErr::RateLimitExceeded(msg, Some(retry), _)) => {
                 assert_eq!(
                     msg,
                     "Rate limit reached for gpt-5.1 in organization org-AAA on tokens per min (TPM): Limit 30000, Used 22999, Requested 12528. Please try again in 11.054s. Visit https://platform.openai.com/account/rate-limits to learn more."
