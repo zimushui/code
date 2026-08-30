@@ -33,7 +33,9 @@ const CONTEXT_WINDOW_128K: u64 = 128_000;
 const CONTEXT_WINDOW_96K: u64 = 96_000;
 const CONTEXT_WINDOW_16K: u64 = 16_385;
 const CONTEXT_WINDOW_1M: u64 = 1_047_576;
+const CONTEXT_WINDOW_QWEN3_CODER_30B: u64 = 262_144;
 const MAX_OUTPUT_DEFAULT: u64 = 128_000;
+const MAX_OUTPUT_QWEN3_CODER_30B: u64 = 65_536;
 
 static UPSTREAM_MODELS: Lazy<Vec<ModelInfo>> = Lazy::new(|| {
     parse_upstream_models(include_str!(
@@ -301,7 +303,16 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
         return Some(family);
     }
 
-    if slug.starts_with("o3") {
+    let normalized_slug = slug.to_ascii_lowercase();
+
+    if normalized_slug.starts_with("qwen3-coder-30b-a3b-instruct") {
+        model_family!(
+            slug, "qwen3-coder-30b-a3b-instruct",
+            uses_shell_command_tool: true,
+            context_window: Some(CONTEXT_WINDOW_QWEN3_CODER_30B),
+            max_output_tokens: Some(MAX_OUTPUT_QWEN3_CODER_30B),
+        )
+    } else if slug.starts_with("o3") {
         model_family!(
             slug, "o3",
             supports_reasoning_summaries: true,
@@ -576,6 +587,17 @@ mod tests {
         let models = parse_upstream_models(catalog).expect("bundled upstream models parse");
 
         assert!(!models.is_empty());
+    }
+
+    #[test]
+    fn qwen3_coder_30b_quantized_slug_has_explicit_local_metadata() {
+        let family = find_family_for_model("Qwen3-Coder-30B-A3B-Instruct-Q4_K_M")
+            .expect("Qwen3 Coder 30B local quantized slug should resolve");
+
+        assert_eq!(family.family, "qwen3-coder-30b-a3b-instruct");
+        assert_eq!(family.context_window, Some(262_144));
+        assert_eq!(family.max_output_tokens, Some(65_536));
+        assert!(family.uses_shell_command_tool);
     }
 }
 
