@@ -7,6 +7,11 @@
 
 - (none)
 
+## [0.6.174] - 2026-08-30
+
+- MCP: allow package-style server names in CLI and connection setup. (d3d52605)
+- Core: refresh codex-rs parity with upstream/main. (f26425bf, 6c916bc4)
+
 ## [0.6.173] - 2026-08-29
 
 - Core: tolerate renamed model summary fields in streamed responses. (1a4fbf66)
