@@ -7,6 +7,11 @@
 
 - (none)
 
+## [0.6.175] - 2026-08-30
+
+- Core: add Qwen3 Coder 30B model metadata. (afc7b205)
+- Release: ignore the upstream Codex mirror in CodeQL analysis. (24708bba)
+
 ## [0.6.173] - 2026-08-29
 
 - Core: tolerate renamed model summary fields in streamed responses. (1a4fbf66)

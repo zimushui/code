@@ -1,18 +1,17 @@
-## @just-every/code v0.6.173
+## @just-every/code v0.6.175
 
-This release improves streamed response handling and refreshes upstream Responses and MCP protocol parity.
+This release updates model metadata and release analysis configuration.
 
 ### Changes
 
-- Core: tolerate renamed model summary fields in streamed responses.
-- Core: classify streamed rate limit errors consistently.
-- Core: backport upstream Responses and MCP protocol parity.
+- Core: add Qwen3 Coder 30B model metadata.
+- Release: ignore the upstream Codex mirror in CodeQL analysis.
 
 ### Install
 
-```sh
+```
 npm install -g @just-every/code@latest
 code
 ```
 
-Compare: https://github.com/just-every/code/compare/v0.6.172...v0.6.173
+Compare: https://github.com/just-every/code/compare/v0.6.174...v0.6.175
