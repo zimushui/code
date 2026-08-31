@@ -7,6 +7,11 @@
 
 - (none)
 
+## [0.6.176] - 2026-08-31
+
+- Core: refresh upstream Codex history for parity with mainline updates. (bf9ff0ba)
+- Release: adopt remote workflow updates while preserving fork release metadata. (fc40904c)
+
 ## [0.6.175] - 2026-08-30
 
 - Core: add Qwen3 Coder 30B model metadata. (afc7b205)
