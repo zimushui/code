@@ -921,6 +921,15 @@ async fn build_guardian_prompt_stale_delta_version_falls_back_to_full_prompt() -
     Ok(())
 }
 
+fn collect_guardian_transcript_entries(
+    history: &dyn codex_guardian_context::SectionHistory,
+    node_repl_result_token_limit: usize,
+) -> Vec<ConversationTranscriptEntry> {
+    prompt::collect_guardian_context(history, node_repl_result_token_limit, &[], &[])
+        .expect("collect Guardian context")
+        .transcript
+}
+
 #[test]
 fn collect_guardian_transcript_entries_skips_contextual_user_messages() {
     let items = vec![
@@ -3349,15 +3358,14 @@ async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() ->
 {
     const TEST_STACK_SIZE_BYTES: usize = 4 * 1024 * 1024;
 
-    let handle =
-        std::thread::Builder::new()
-            .name("guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history".to_string())
-            .stack_size(TEST_STACK_SIZE_BYTES)
-            .spawn(|| -> anyhow::Result<()> {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?;
-                runtime.block_on(Box::pin(async {
+    let handle = std::thread::Builder::new()
+        .name("guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history".to_string())
+        .stack_size(TEST_STACK_SIZE_BYTES)
+        .spawn(|| -> anyhow::Result<()> {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(Box::pin(async {
         let first_assessment = serde_json::json!({
             "risk_level": "low",
             "user_authorization": "high",
@@ -3421,7 +3429,11 @@ async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() ->
         ])
         .await;
 
-        let (session, turn) = guardian_test_session_and_turn_with_base_url(server.uri()).await;
+        let (mut session, turn) = guardian_test_session_and_turn_with_base_url(server.uri()).await;
+        // Isolate feedback from other tests using the fixed parent session ID.
+        Arc::get_mut(&mut session)
+            .expect("session should be uniquely owned")
+            .thread_id = ThreadId::new();
         turn.turn_metadata_state
             .set_parent_turn_id("upstream-parent-turn".to_string());
         turn.turn_metadata_state
@@ -3544,8 +3556,6 @@ async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() ->
             )
             .await;
 
-        // A conflicting input removes the known root while the trunk review is in flight.
-        turn.turn_metadata_state.mark_root_turn_ambiguous();
         let third_decision = review_approval_request(
             &session,
             &turn,
@@ -3570,8 +3580,8 @@ async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() ->
         for (body, expected_root) in [
             (&first_request_body, Some("causal-root-turn")),
             (&second_request_body, Some("causal-root-turn")),
-            (&failed_ephemeral_request_body, None),
-            (&retried_ephemeral_request_body, None),
+            (&failed_ephemeral_request_body, Some("causal-root-turn")),
+            (&retried_ephemeral_request_body, Some("causal-root-turn")),
         ] {
             assert_parent_turn(body, Some(turn.sub_id.as_str()))?;
             assert_root_turn(body, expected_root)?;
@@ -3618,11 +3628,37 @@ async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() ->
             .send(())
             .expect("second guardian review gate should still be open");
         assert_eq!(second_review.await?, ReviewDecision::Approved);
+        let feedback = codex_feedback::guardian_review_failures(&[session.thread_id()])
+            .attachment
+            .expect("failed ephemeral review survives cleanup and subsequent allowed reviews");
+        let record: serde_json::Value = serde_json::from_slice(&feedback.buffer)?;
+        assert_eq!(
+            serde_json::json!({
+                "reviewed_thread_id": record["reviewed_thread_id"],
+                "reviewed_turn_id": record["reviewed_turn_id"],
+                "target_item_id": record["target_item_id"],
+                "reviewer_thread_id": record["reviewer_thread_id"],
+                "status": record["status"],
+                "decision": record["decision"],
+                "command": serde_json::from_str::<serde_json::Value>(
+                    record["action"].as_str().expect("reviewed action")
+                )?["command"],
+            }),
+            serde_json::json!({
+                "reviewed_thread_id": session.thread_id(),
+                "reviewed_turn_id": turn.sub_id,
+                "target_item_id": "shell-guardian-3",
+                "reviewer_thread_id": failed_ephemeral_request_body["client_metadata"]["thread_id"],
+                "status": "invalid_decision",
+                "decision": "not valid guardian json",
+                "command": ["git", "push"],
+            })
+        );
         server.shutdown().await;
 
         Ok(())
                 }))
-            })?;
+        })?;
 
     match handle.join() {
         Ok(result) => result,

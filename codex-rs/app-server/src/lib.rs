@@ -122,8 +122,6 @@ mod models_refresh_worker;
 mod notification_media;
 mod otel_reloader;
 mod outgoing_message;
-mod realtime_event_handling;
-mod realtime_history;
 mod request_processors;
 mod request_serialization;
 mod server_request_error;
@@ -825,11 +823,7 @@ pub async fn run_main_with_transport_options(
 
     // Only the standalone server measures its local home, not embedded/cloud runtimes.
     if let Some(metrics) = otel.as_ref().and_then(codex_otel::OtelProvider::metrics) {
-        codex_home_metrics::spawn(
-            config.codex_home.to_path_buf(),
-            metrics.clone(),
-            transport_shutdown_token.clone(),
-        );
+        codex_home_metrics::spawn(&config, metrics.clone(), transport_shutdown_token.clone());
     }
 
     let otel_reloader_handle = otel_reloader::spawn(
