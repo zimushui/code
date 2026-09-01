@@ -7,6 +7,13 @@
 
 - (none)
 
+## [0.6.177] - 2026-09-01
+
+- Core: refresh upstream Codex history for parity with mainline updates. (e6a7b3ff)
+- CLI: detect Vite+-managed Codex installs. (d1414383)
+- Core: record Windows MXC availability for executor support. (ade0cca)
+- Release: keep the codex-rs mirror aligned with upstream/main. (ce5162ca)
+
 ## [0.6.176] - 2026-08-31
 
 - Core: refresh upstream Codex history for parity with mainline updates. (bf9ff0ba)
