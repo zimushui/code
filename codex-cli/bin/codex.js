@@ -111,7 +111,9 @@ if (!vendorRoot) {
       ? "bun install -g @openai/codex@latest"
       : packageManager === "pnpm"
         ? "pnpm add -g @openai/codex@latest"
-        : "npm install -g @openai/codex@latest";
+        : packageManager === "vite-plus"
+          ? "vp install -g @openai/codex@latest"
+          : "npm install -g @openai/codex@latest";
   throw new Error(
     `Missing optional dependency ${platformPackage}. Reinstall Codex: ${updateCommand}`,
   );
