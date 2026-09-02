@@ -58,6 +58,7 @@ use crate::marketplace::list_marketplaces_with_home;
 use crate::marketplace::plugin_interface_with_marketplace_category;
 use crate::marketplace_policy::MarketplacePolicy;
 use crate::marketplace_policy::configured_plugins_from_stack;
+use crate::marketplace_upgrade::ConfigLayerReload;
 use crate::marketplace_upgrade::ConfiguredMarketplaceUpgradeError;
 use crate::marketplace_upgrade::ConfiguredMarketplaceUpgradeOutcome;
 use crate::marketplace_upgrade::upgrade_configured_git_marketplaces_with_mode;
@@ -563,9 +564,26 @@ struct LoadedPluginsCache {
 }
 
 impl LoadedPluginsCache {
-    fn get(&mut self, key: &PluginLoadCacheKey) -> Option<&LoadedPluginsCacheEntry> {
+    fn get(
+        &mut self,
+        key: &PluginLoadCacheKey,
+        store: &PluginStore,
+    ) -> Option<&LoadedPluginsCacheEntry> {
         let index = self.entries.iter().position(|entry| &entry.key == key)?;
         let entry = self.entries.remove(index)?;
+        // Another process can replace installed versions without invalidating this manager.
+        // Keep the parsed skills paired with the installation whose paths they advertise.
+        if entry.plugins.iter().any(|plugin| {
+            let Ok(plugin_id) = PluginId::parse(&plugin.config_name) else {
+                return false;
+            };
+            let installed_root = store
+                .active_plugin_root(&plugin_id)
+                .unwrap_or_else(|| store.plugin_base_root(&plugin_id));
+            installed_root != plugin.root
+        }) {
+            return None;
+        }
         self.entries.push_front(entry);
         self.entries.front()
     }
@@ -744,7 +762,7 @@ impl PluginsManager {
         self.loaded_plugins_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&key)
+            .get(&key, &self.store)
             .map(|cached| cached.plugin_skill_snapshots.clone())
     }
 
@@ -967,7 +985,7 @@ impl PluginsManager {
         self.loaded_plugins_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(key)
+            .get(key, &self.store)
             .map(|cached| cached.plugins.clone())
     }
 
@@ -2734,6 +2752,7 @@ impl PluginsManager {
     pub fn maybe_start_plugin_startup_tasks_for_config(
         self: &Arc<Self>,
         config: &PluginsConfigInput,
+        reload_config: ConfigLayerReload,
         on_effective_plugins_changed: Option<EffectivePluginsChangedCallback>,
     ) {
         if config.plugins_enabled {
@@ -2765,6 +2784,7 @@ impl PluginsManager {
                             &config,
                             /*marketplace_name*/ None,
                             PluginGitMode::Automatic,
+                            &reload_config,
                         );
                         match outcome {
                             Ok(outcome) => {
@@ -2860,11 +2880,13 @@ impl PluginsManager {
         &self,
         config: &PluginsConfigInput,
         marketplace_name: Option<&str>,
+        reload_config: &ConfigLayerReload,
     ) -> Result<ConfiguredMarketplaceUpgradeOutcome, String> {
         self.upgrade_configured_marketplaces_for_config_with_mode(
             config,
             marketplace_name,
             PluginGitMode::Manual,
+            reload_config,
         )
     }
 
@@ -2874,12 +2896,14 @@ impl PluginsManager {
         config: &PluginsConfigInput,
         marketplace_name: Option<&str>,
         mode: PluginGitMode,
+        reload_config: &ConfigLayerReload,
     ) -> Result<ConfiguredMarketplaceUpgradeOutcome, String> {
         let mut outcome = upgrade_configured_git_marketplaces_with_mode(
             self.codex_home.as_path(),
             &config.config_layer_stack,
             marketplace_name,
             mode,
+            reload_config,
         );
         if let Some(marketplace_name) = marketplace_name
             && outcome.selected_marketplaces.is_empty()

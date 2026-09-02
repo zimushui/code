@@ -2427,6 +2427,7 @@ dependencies = [
  "codex-app-server-protocol",
  "codex-app-server-test-client",
  "codex-arg0",
+ "codex-build-info",
  "codex-chatgpt",
  "codex-cloud-config",
  "codex-cloud-tasks",
@@ -2467,8 +2468,10 @@ dependencies = [
  "codex-utils-cargo-bin",
  "codex-utils-cli",
  "codex-utils-path",
+ "codex-utils-pty",
  "codex-windows-sandbox",
  "crossterm",
+ "flate2",
  "futures",
  "http 1.4.0",
  "insta",
@@ -2483,6 +2486,7 @@ dependencies = [
  "sqlx",
  "supports-color 3.0.2",
  "sys-locale",
+ "tar",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
@@ -2994,7 +2998,6 @@ dependencies = [
  "tracing-test",
  "url",
  "uuid",
- "which 8.0.0",
  "wiremock",
  "zip",
 ]
@@ -3067,6 +3070,7 @@ dependencies = [
  "bytes",
  "clatter",
  "codex-api",
+ "codex-build-info",
  "codex-config",
  "codex-exec-server-protocol",
  "codex-exec-server-test-support",
@@ -3179,6 +3183,7 @@ dependencies = [
  "codex-config",
  "codex-context-fragments",
  "codex-exec-server-protocol",
+ "codex-history",
  "codex-mcp",
  "codex-protocol",
  "codex-tools",
@@ -3382,6 +3387,7 @@ name = "codex-guardian-v2"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "codex-analytics",
  "codex-api",
  "codex-core",
  "codex-extension-api",
@@ -3422,6 +3428,7 @@ dependencies = [
 name = "codex-history-notes-extension"
 version = "0.0.0"
 dependencies = [
+ "codex-analytics",
  "codex-api",
  "codex-client",
  "codex-config",
@@ -4615,6 +4622,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uds_windows",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4762,6 +4770,7 @@ dependencies = [
  "dunce",
  "pretty_assertions",
  "tempfile",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4964,6 +4973,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-windows-sandbox-service"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "codex-cloud-config",
+ "codex-config",
+ "codex-core",
+ "codex-windows-sandbox",
+ "tokio",
+ "toml 0.9.11+spec-1.1.0",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "codex-workload-identity"
 version = "0.0.0"
 dependencies = [
@@ -4990,6 +5013,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]

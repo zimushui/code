@@ -2111,7 +2111,14 @@
               "type": "string"
             },
             "params": {
-              "type": "null"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/v2/GetAccountRateLimitsParams"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -4272,7 +4279,7 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "cwd": {
-          "$ref": "#/definitions/v2/AbsolutePathBuf"
+          "$ref": "#/definitions/v2/LegacyAppPathString"
         },
         "environmentId": {
           "default": null,
@@ -7734,6 +7741,27 @@
           }
         ]
       },
+      "AsyncUserInputQuestion": {
+        "additionalProperties": false,
+        "properties": {
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      },
       "AuthMode": {
         "description": "Authentication mode for OpenAI-backed providers.",
         "oneOf": [
@@ -9987,6 +10015,18 @@
         "title": "ConfigWriteResponse",
         "type": "object"
       },
+      "ConfigurationReasoning": {
+        "description": "Reasoning settings interpreted by the backend for the routed model.",
+        "properties": {
+          "effort": {
+            "$ref": "#/definitions/v2/ReasoningEffort"
+          }
+        },
+        "required": [
+          "effort"
+        ],
+        "type": "object"
+      },
       "ConfiguredHookHandler": {
         "oneOf": [
           {
@@ -12225,6 +12265,20 @@
         "title": "GetAccountParams",
         "type": "object"
       },
+      "GetAccountRateLimitsParams": {
+        "description": "Usage-read capabilities of the requesting client, never inferred from its experiment arm.",
+        "properties": {
+          "excludeResetCreditDetails": {
+            "description": "Skip the separate reset-credit detail lookup for background usage polls. The usage response still includes the available count; omitted/false preserves detailed reads.",
+            "type": "boolean"
+          },
+          "supportsLunaReserve": {
+            "description": "The client supports automatic Luna Reserve fallback. For eligible ChatGPT CLI users, allow the backend to record experiment exposure after ordinary usage is blocked.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "GetAccountRateLimitsResponse": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
@@ -12232,6 +12286,13 @@
             "description": "Account associated with this usage snapshot, when supplied by the backend.",
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "ordinaryUsageAllowed": {
+            "description": "Backend permission for ordinary included usage, validated against the active account. Null means unavailable; clients must not infer recovery from percentages or reset times.",
+            "type": [
+              "boolean",
               "null"
             ]
           },
@@ -15464,6 +15525,18 @@
         ],
         "type": "string"
       },
+      "NullableGetAccountRateLimitsParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "anyOf": [
+          {
+            "$ref": "#/definitions/v2/GetAccountRateLimitsParams"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Nullable_GetAccountRateLimitsParams"
+      },
       "NullableGetAccountTokenUsageParams": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "anyOf": [
@@ -18694,6 +18767,27 @@
             "type": "object"
           },
           {
+            "description": "A durable input control interpreted by the backend at its position in history.",
+            "properties": {
+              "reasoning": {
+                "$ref": "#/definitions/v2/ConfigurationReasoning"
+              },
+              "type": {
+                "enum": [
+                  "configuration_update"
+                ],
+                "title": "ConfigurationUpdateResponseItemType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reasoning",
+              "type"
+            ],
+            "title": "ConfigurationUpdateResponseItem",
+            "type": "object"
+          },
+          {
             "properties": {
               "type": {
                 "enum": [
@@ -20186,6 +20280,13 @@
             "description": "Identifier for this thread. Codex-generated thread IDs are UUIDv7.",
             "type": "string"
           },
+          "model": {
+            "description": "Current configured model when loaded, otherwise the latest persisted model. Null when unavailable. This is not per-turn execution telemetry.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "modelProvider": {
             "description": "Model provider used for this thread (for example, 'openai').",
             "type": "string"
@@ -20221,6 +20322,17 @@
               "string",
               "null"
             ]
+          },
+          "reasoningEffort": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/ReasoningEffort"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current configured reasoning effort when loaded, otherwise the latest persisted effort. Null when unset or unavailable. This is not per-turn execution telemetry."
           },
           "recencyAt": {
             "description": "Unix timestamp (in seconds) used for thread recency ordering.",
@@ -20954,6 +21066,16 @@
                   }
                 ],
                 "default": null
+              },
+              "questions": {
+                "default": null,
+                "items": {
+                  "$ref": "#/definitions/v2/AsyncUserInputQuestion"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
               },
               "text": {
                 "type": "string"

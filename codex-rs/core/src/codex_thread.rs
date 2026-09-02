@@ -86,6 +86,8 @@ pub struct ThreadConfigSnapshot {
     pub approval_policy: AskForApproval,
     pub approvals_reviewer: ApprovalsReviewer,
     pub permission_profile: PermissionProfile,
+    /// Resolved Full Access across the thread and every selected environment.
+    pub full_access: bool,
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub environments: TurnEnvironmentSelections,
     pub workspace_roots: Vec<AbsolutePathBuf>,
@@ -729,6 +731,20 @@ impl CodexThread {
 
     pub async fn config_snapshot(&self) -> ThreadConfigSnapshot {
         self.session.thread_config_snapshot().await
+    }
+
+    /// Returns the active turn's reviewer, including live updates, or the thread default.
+    pub async fn approvals_reviewer_for_turn(&self, turn_id: &str) -> ApprovalsReviewer {
+        if let Some((turn, settings, _)) = self
+            .session
+            .active_turn_context_and_strict_auto_review()
+            .await
+            && turn.sub_id == turn_id
+        {
+            settings.approvals_reviewer()
+        } else {
+            self.config_snapshot().await.approvals_reviewer
+        }
     }
 
     /// Returns thread-owned settings suitable for rollout persistence and resume.

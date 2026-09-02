@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -121,6 +120,7 @@ use codex_protocol::models::SandboxEnforcement;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::FileSystemSandboxPolicyContext;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::HasLegacyEvent;
@@ -156,7 +156,7 @@ use codex_rollout::state_db;
 use codex_rollout_trace::AgentResultTracePayload;
 use codex_rollout_trace::ThreadStartedTraceMetadata;
 use codex_rollout_trace::ThreadTraceContext;
-use codex_sandboxing::policy_transforms::intersect_permission_profiles;
+use codex_sandboxing::policy_transforms::intersect_permission_profiles_with_context;
 use codex_shell_command::parse_command::parse_command;
 use codex_terminal_detection::user_agent;
 use codex_thread_store::CreateThreadParams;
@@ -1540,6 +1540,7 @@ impl Session {
     ) -> Option<PreviousTurnSettings> {
         let rollout_reconstruction::RolloutReconstruction {
             mut history,
+            retained_context,
             guardian_history,
             previous_turn_settings,
             reference_context_item,
@@ -1586,6 +1587,7 @@ impl Session {
             state
                 .history
                 .restore_guardian_history(guardian_history.as_ref());
+            state.history.restore_retained_context(&retained_context);
             if let Some(world_state) = world_state_baseline {
                 state.history.set_world_state_baseline(world_state);
             }
@@ -2757,12 +2759,27 @@ impl Session {
         step_context: &Arc<StepContext>,
         call_id: String,
         args: RequestPermissionsArgs,
-        environment: TurnEnvironmentSelection,
+        environment_selection: TurnEnvironmentSelection,
         cancellation_token: CancellationToken,
     ) -> Option<RequestPermissionsResponse> {
         let turn_context = &step_context.turn;
         let approval_policy = step_context.settings.approval_policy();
         let approvals_reviewer = step_context.settings.approvals_reviewer();
+        let Some(environment) = step_context
+            .environments
+            .turn_environments()
+            .find(|candidate| {
+                candidate.selection.environment_id == environment_selection.environment_id
+            })
+            .cloned()
+        else {
+            return Some(RequestPermissionsResponse {
+                permissions: RequestPermissionProfile::default(),
+                scope: PermissionGrantScope::Turn,
+                strict_auto_review: false,
+            });
+        };
+        let cwd = environment.cwd();
         match approval_policy {
             AskForApproval::Never => {
                 return Some(RequestPermissionsResponse {
@@ -2786,19 +2803,14 @@ impl Session {
         }
 
         let requested_permissions = args.permissions;
-        // TODO(anp): Migrate request_permissions to support paths from foreign environments.
-        let Ok(native_environment_cwd) = environment.cwd.to_abs_path() else {
-            warn!(
-                cwd = %environment.cwd,
-                "request_permissions requires a cwd native to the Codex host"
-            );
+        let sandbox_context = environment.sandbox_context(/*additional_permissions*/ None);
+        let Some(context) = sandbox_context.policy_context() else {
             return Some(RequestPermissionsResponse {
                 permissions: RequestPermissionProfile::default(),
                 scope: PermissionGrantScope::Turn,
                 strict_auto_review: false,
             });
         };
-
         if crate::guardian::routes_approval_policy_to_guardian(approval_policy, approvals_reviewer)
         {
             let originating_turn_state = {
@@ -2868,11 +2880,11 @@ impl Session {
             let response = Self::normalize_request_permissions_response(
                 requested_permissions,
                 response,
-                native_environment_cwd.as_path(),
+                &context,
             );
             self.record_granted_request_permissions_for_turn(
                 &response,
-                &environment.environment_id,
+                &environment.selection.environment_id,
                 originating_turn_state.as_ref(),
             )
             .await;
@@ -2905,11 +2917,11 @@ impl Session {
         let event = EventMsg::RequestPermissions(RequestPermissionsEvent {
             call_id: call_id.clone(),
             turn_id: turn_context.sub_id.clone(),
-            environment_id: Some(environment.environment_id.clone()),
+            environment_id: Some(environment.selection.environment_id.clone()),
             started_at_ms: now_unix_timestamp_ms(),
             reason: args.reason,
             permissions: requested_permissions,
-            cwd: Some(native_environment_cwd),
+            cwd: Some(cwd.clone().into()),
         });
         self.send_event(turn_context.as_ref(), event).await;
         tokio::select! {
@@ -3020,29 +3032,25 @@ impl Session {
         };
         match entry {
             Some(entry) => {
-                // TODO(anp): Migrate request_permissions to support paths from foreign environments.
-                let response = match entry.environment.cwd.to_abs_path() {
-                    Ok(native_environment_cwd) => Self::normalize_request_permissions_response(
+                let sandbox_context = entry
+                    .environment
+                    .sandbox_context(/*additional_permissions*/ None);
+                let response = if let Some(context) = sandbox_context.policy_context() {
+                    Self::normalize_request_permissions_response(
                         entry.requested_permissions,
                         response,
-                        native_environment_cwd.as_path(),
-                    ),
-                    Err(err) => {
-                        warn!(
-                            cwd = %entry.environment.cwd,
-                            %err,
-                            "request_permissions requires a cwd native to the Codex host"
-                        );
-                        RequestPermissionsResponse {
-                            permissions: RequestPermissionProfile::default(),
-                            scope: PermissionGrantScope::Turn,
-                            strict_auto_review: false,
-                        }
+                        &context,
+                    )
+                } else {
+                    RequestPermissionsResponse {
+                        permissions: RequestPermissionProfile::default(),
+                        scope: PermissionGrantScope::Turn,
+                        strict_auto_review: false,
                     }
                 };
                 self.record_granted_request_permissions_for_turn(
                     &response,
-                    &entry.environment.environment_id,
+                    &entry.environment.selection.environment_id,
                     originating_turn_state.as_ref(),
                 )
                 .await;
@@ -3057,7 +3065,7 @@ impl Session {
     fn normalize_request_permissions_response(
         requested_permissions: RequestPermissionProfile,
         response: RequestPermissionsResponse,
-        cwd: &Path,
+        context: &FileSystemSandboxPolicyContext<'_>,
     ) -> RequestPermissionsResponse {
         if response.strict_auto_review && matches!(response.scope, PermissionGrantScope::Session) {
             return RequestPermissionsResponse {
@@ -3072,10 +3080,10 @@ impl Session {
         }
 
         RequestPermissionsResponse {
-            permissions: intersect_permission_profiles(
+            permissions: intersect_permission_profiles_with_context(
                 requested_permissions.into(),
                 response.permissions.into(),
-                cwd,
+                context,
             )
             .into(),
             scope: response.scope,
@@ -3741,6 +3749,7 @@ impl Session {
         let mut compacted_item = CompactedItem {
             message: metadata.message,
             replacement_history: Some(items.clone()),
+            retained_context: None,
             guardian_history: None,
             mcp_resource_origins: self.services.mcp_runtime.resource_origin_checkpoint(),
             window_number: Some(metadata.window_number),
@@ -3766,6 +3775,7 @@ impl Session {
                 HistoryReplacement::Compaction,
             );
             compacted_item.guardian_history = state.history.guardian_history_checkpoint();
+            compacted_item.retained_context = Some(state.history.retained_context().clone());
             if let Some(world_state) = world_state_baseline {
                 let snapshot = world_state.snapshot();
                 world_state_item = Some(WorldStateItem::full(snapshot.clone().into_object()));

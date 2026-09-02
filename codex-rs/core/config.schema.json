@@ -1041,6 +1041,9 @@
             "web_search_request": {
               "type": "boolean"
             },
+            "windows_sandbox_service": {
+              "type": "boolean"
+            },
             "workspace_dependencies": {
               "type": "boolean"
             },
@@ -3927,6 +3930,7 @@
               "delete_char": null,
               "delete_to_line_end": null,
               "enter_insert": null,
+              "enter_replace_mode": null,
               "find_backward": null,
               "find_forward": null,
               "insert_line_start": null,
@@ -3944,6 +3948,7 @@
               "open_line_above": null,
               "open_line_below": null,
               "paste_after": null,
+              "redo": null,
               "repeat_last_change": null,
               "replace_char": null,
               "start_change_operator": null,
@@ -4754,6 +4759,7 @@
             "delete_char": null,
             "delete_to_line_end": null,
             "enter_insert": null,
+            "enter_replace_mode": null,
             "find_backward": null,
             "find_forward": null,
             "insert_line_start": null,
@@ -4771,6 +4777,7 @@
             "open_line_above": null,
             "open_line_below": null,
             "paste_after": null,
+            "redo": null,
             "repeat_last_change": null,
             "replace_char": null,
             "start_change_operator": null,
@@ -5098,6 +5105,14 @@
           ],
           "description": "Enter insert mode at cursor (`i`)."
         },
+        "enter_replace_mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Enter replace mode and overwrite characters under the cursor (`R`)."
+        },
         "find_backward": {
           "allOf": [
             {
@@ -5233,6 +5248,14 @@
             }
           ],
           "description": "Paste after cursor (`p`)."
+        },
+        "redo": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Redo the last undone edit (`ctrl-r`)."
         },
         "repeat_last_change": {
           "allOf": [
@@ -6333,6 +6356,9 @@
         "web_search_request": {
           "type": "boolean"
         },
+        "windows_sandbox_service": {
+          "type": "boolean"
+        },
         "workspace_dependencies": {
           "type": "boolean"
         },
@@ -6750,6 +6776,12 @@
     "suppress_unstable_features_warning": {
       "description": "Suppress warnings about unstable (under development) features.",
       "type": "boolean"
+    },
+    "thread_unload_delay_secs": {
+      "description": "Seconds a thread must have no subscribers and no activity before app-server unloads it. Defaults to 60; zero unloads immediately. Changes require a server restart.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
     },
     "tool_output_token_limit": {
       "description": "Token budget applied when storing tool/function outputs in the context manager.",

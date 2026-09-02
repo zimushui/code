@@ -493,6 +493,16 @@ enum GetAccountTokenUsageParamsTypeScript {
     Undefined,
 }
 
+/// Preserve omitted/undefined params while exporting the new usage capability type.
+#[allow(dead_code)]
+#[derive(TS)]
+#[ts(untagged)]
+enum GetAccountRateLimitsParamsTypeScript {
+    Params(v2::GetAccountRateLimitsParams),
+    #[ts(type = "undefined")]
+    Undefined,
+}
+
 client_request_definitions! {
     Initialize => "initialize" {
         params: v1::InitializeParams,
@@ -1232,7 +1242,7 @@ client_request_definitions! {
     },
 
     GetAccountRateLimits => "account/rateLimits/read" {
-        params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,
+        params: #[ts(optional, as = "Option<GetAccountRateLimitsParamsTypeScript>", inline)] #[serde(default, skip_serializing_if = "Option::is_none")] v2::NullableGetAccountRateLimitsParams,
         serialization: None,
         response: v2::GetAccountRateLimitsResponse,
     },
@@ -3130,6 +3140,8 @@ mod tests {
                     project_id: None,
                     history_mode: Default::default(),
                     model_provider: "openai".to_string(),
+                    model: None,
+                    reasoning_effort: None,
                     created_at: 1,
                     updated_at: 2,
                     recency_at: Some(3),
@@ -3185,6 +3197,8 @@ mod tests {
                         "projectId": null,
                         "historyMode": "legacy",
                         "modelProvider": "openai",
+                        "model": null,
+                        "reasoningEffort": null,
                         "createdAt": 1,
                         "updatedAt": 2,
                         "recencyAt": 3,

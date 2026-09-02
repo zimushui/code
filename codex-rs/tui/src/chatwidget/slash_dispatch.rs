@@ -269,6 +269,13 @@ impl ChatWidget {
                 if !self.bottom_pane.is_task_running() {
                     self.bottom_pane.set_task_running(/*running*/ true);
                 }
+                self.bottom_pane.ensure_status_indicator();
+                self.set_status(
+                    compaction::COMPACTION_HEADER.to_string(),
+                    Some(compaction::COMPACTION_DETAILS.to_string()),
+                    StatusDetailsCapitalization::Preserve,
+                    STATUS_DETAILS_DEFAULT_MAX_LINES,
+                );
                 self.input_queue.user_turn_pending_start = true;
                 self.app_event_tx.compact();
             }
@@ -743,7 +750,8 @@ impl ChatWidget {
             SlashCommand::Keymap => match trimmed.to_ascii_lowercase().as_str() {
                 "" => self.open_keymap_picker(),
                 "debug" => {
-                    match crate::keymap::RuntimeKeymap::from_config(&self.config.tui_keymap) {
+                    match crate::keymap::RuntimeKeymap::from_config(&self.local_settings.tui.keymap)
+                    {
                         Ok(runtime_keymap) => self.open_keymap_debug(&runtime_keymap),
                         Err(err) => {
                             self.add_error_message(format!(
