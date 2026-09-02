@@ -249,7 +249,9 @@ function extractEventId(event: Record<string, unknown>): string {
 function normalizeUsage(raw: Record<string, unknown>): {
   input_tokens: number;
   cached_input_tokens: number;
+  cache_write_input_tokens: number;
   output_tokens: number;
+  reasoning_output_tokens: number;
 } {
   const toNumber = (value: unknown): number => {
     if (typeof value === "number" && Number.isFinite(value)) {
@@ -265,6 +267,8 @@ function normalizeUsage(raw: Record<string, unknown>): {
   return {
     input_tokens: toNumber(raw.input_tokens),
     cached_input_tokens: toNumber(raw.cached_input_tokens),
+    cache_write_input_tokens: toNumber(raw.cache_write_input_tokens),
     output_tokens: toNumber(raw.output_tokens),
+    reasoning_output_tokens: toNumber(raw.reasoning_output_tokens),
   };
 }

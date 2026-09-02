@@ -8,7 +8,13 @@ ignoredBuiltDependencies:
   - esbuild
 
 minimumReleaseAge: 10080
-minimumReleaseAgeExclude: []
+minimumReleaseAgeExclude:
+  - "@just-every/code-darwin-arm64"
+  - "@just-every/code-darwin-x64"
+  - "@just-every/code-linux-arm64-musl"
+  - "@just-every/code-linux-x64-musl"
+  - "@just-every/code-win32-x64"
+  - browserslist
 
 blockExoticSubdeps: true
 strictDepBuilds: true

@@ -17,7 +17,9 @@
   },
   "resolutions": {
     "@babel/core": "7.29.6",
+    "@humanfs/node": "0.16.8",
     "@modelcontextprotocol/sdk": "1.26.0",
+    "browserslist": "4.28.7",
     "braces": "^3.0.3",
     "brace-expansion@1.1.12": "1.1.18",
     "brace-expansion@5.0.5": "5.0.9",
