@@ -7,6 +7,13 @@
 
 - (none)
 
+## [0.6.178] - 2026-09-02
+
+- Core: refresh upstream Codex history for parity with mainline updates. (f9fb7e39)
+- Release: keep the codex-rs mirror aligned with upstream/main. (07ba4303)
+- Release: add a cacheable Bazel app-server schema bundle for packaging. (b21f2e30)
+- Release: fetch rules_rs zlib packages from Ubuntu snapshots for reproducible builds. (94e5d050)
+
 ## [0.6.177] - 2026-09-01
 
 - Core: refresh upstream Codex history for parity with mainline updates. (e6a7b3ff)
