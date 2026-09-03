@@ -13,10 +13,11 @@ mod collaboration_mode_list;
 #[cfg(unix)]
 mod command_exec;
 mod compaction;
+mod config_requirements_application;
 mod config_requirements_in_app_browser;
 mod config_rpc;
 mod connection_handling_websocket;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod connection_handling_websocket_unix;
 #[cfg(unix)]
 mod curated_mcp_sync;
@@ -97,6 +98,7 @@ mod skills_list;
 mod sleep;
 mod thread_archive;
 mod thread_delete;
+mod thread_environments;
 mod thread_fork;
 mod thread_inject_items;
 mod thread_list;
