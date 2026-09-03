@@ -7,6 +7,13 @@
 
 - (none)
 
+## [0.6.179] - 2026-09-03
+
+- Core: refresh upstream history and model allowlist for mainline parity. (df15f327)
+- Models: add GPT-6-Astra to the bundled model catalog. (ed391d4d)
+- Core: update rmcp to 3.2.0 for MCP dependency parity. (a28aab75)
+- Release: keep the codex-rs mirror aligned with upstream/main. (a4488c65)
+
 ## [0.6.178] - 2026-09-02
 
 - Core: refresh upstream Codex history for parity with mainline updates. (f9fb7e39)
