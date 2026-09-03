@@ -7,6 +7,11 @@
 
 - (none)
 
+## [0.6.179] - 2026-09-03
+
+- Dependencies: patch JS tooling security alerts. (2d0f735f)
+- SDK: report cache-write and reasoning token usage in TypeScript threads. (2d0f735f)
+
 ## [0.6.178] - 2026-09-02
 
 - Core: refresh upstream Codex history for parity with mainline updates. (f9fb7e39)

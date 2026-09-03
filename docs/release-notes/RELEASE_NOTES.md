@@ -1,13 +1,11 @@
-## @just-every/code v0.6.178
+## @just-every/code v0.6.179
 
-This release refreshes upstream parity and improves release packaging reproducibility.
+This release patches JS tooling security alerts and improves TypeScript SDK usage reporting.
 
 ### Changes
 
-- Core: refresh upstream Codex history for parity with mainline updates.
-- Release: keep the codex-rs mirror aligned with upstream/main.
-- Release: add a cacheable Bazel app-server schema bundle for packaging.
-- Release: fetch rules_rs zlib packages from Ubuntu snapshots for reproducible builds.
+- Dependencies: patch JS tooling security alerts.
+- SDK: report cache-write and reasoning token usage in TypeScript threads.
 
 ### Install
 
@@ -16,4 +14,4 @@ npm install -g @just-every/code@latest
 code
 ```
 
-Compare: https://github.com/just-every/code/compare/v0.6.177...v0.6.178
+Compare: https://github.com/just-every/code/compare/v0.6.178...v0.6.179
