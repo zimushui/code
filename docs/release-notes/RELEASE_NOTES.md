@@ -1,13 +1,13 @@
-## @just-every/code v0.6.179
+## @just-every/code v0.6.180
 
-This release refreshes upstream parity and updates the bundled model and MCP dependency metadata.
+This release improves Linux packaging, TUI copy behavior, voice host setup, and bundled model metadata.
 
 ### Changes
 
-- Core: refresh upstream history and model allowlist for mainline parity.
+- CLI: use jemalloc for Linux musl binaries to improve allocator behavior.
+- TUI: preserve Markdown formatting when copying assistant responses.
+- Voice: add WebRTC negotiation and initialize the packaged GStreamer runtime in the voice host.
 - Models: add GPT-6-Astra to the bundled model catalog.
-- Core: update rmcp to 3.2.0 for MCP dependency parity.
-- Release: keep the codex-rs mirror aligned with upstream/main.
 
 ### Install
 
@@ -15,5 +15,3 @@ This release refreshes upstream parity and updates the bundled model and MCP dep
 npm install -g @just-every/code@latest
 code
 ```
-
-Compare: https://github.com/just-every/code/compare/v0.6.179...v0.6.179

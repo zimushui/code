@@ -7,6 +7,13 @@
 
 - (none)
 
+## [0.6.180] - 2026-09-04
+
+- CLI: use jemalloc for Linux musl binaries to improve allocator behavior. (8e4b7d31)
+- TUI: preserve Markdown formatting when copying assistant responses. (7a8092a)
+- Voice: add WebRTC negotiation and initialize the packaged GStreamer runtime in the voice host. (1b53f6a4, d979df15)
+- Models: add GPT-6-Astra to the bundled model catalog. (ed391d4d)
+
 ## [0.6.179] - 2026-09-03
 
 - Core: refresh upstream history and model allowlist for mainline parity. (df15f327)
